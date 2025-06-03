@@ -521,6 +521,8 @@ if __name__ == '__main__':
     
     args = parser.parse_args()
     args.ratio = 1- args.ratio
+    if args.step == 0:
+        print("Nothing done")
     if args.step == 1:
         model, tokenizer = get_model_from_huggingface(model_id=args.model)
         model = model.eval()
