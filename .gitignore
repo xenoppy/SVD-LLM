@@ -3,5 +3,5 @@ cache/*
 **/__pycache__
 utils/c4-*
 *.pt
-first_half/*
-second_half/*
+first_half*/*
+second_half*/*
