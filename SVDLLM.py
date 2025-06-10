@@ -79,6 +79,7 @@ def profle_svdllm(name, model, calib_loader, dev):
 
 @torch.no_grad()
 def profle_svdllm_low_resource(model_name, model, calib_loader, dev):
+    # 1.获取transformer的层，并将embedding和norm等必要模块转到目标设备
     if "opt" in model_name:
         layers = model.model.decoder.layers
         model.model.decoder.embed_tokens = model.model.decoder.embed_tokens.to(dev)
@@ -88,20 +89,24 @@ def profle_svdllm_low_resource(model_name, model, calib_loader, dev):
         layers = model.model.layers
         model.model.embed_tokens = model.model.embed_tokens.to(dev)
         model.model.norm = model.model.norm.to(dev)
-    layers[0] = layers[0].to(dev)
+    layers[0] = layers[0].to(dev) # 只把第一层转到指定设备，节省显存
 
-    dtype = next(iter(model.parameters())).dtype
+    # 2.初始化输入缓存inps，用于存储每个样本经过embedding后的hidden states
+    dtype = next(iter(model.parameters())).dtype # 获取模型参数的数据类型
     inps = torch.zeros(
         (len(calib_loader), model.seqlen, model.config.hidden_size), dtype=dtype, device=dev
     )
     cache = {'i': 0, 'attention_mask': None, "position_ids": None}
+    # 3.定义Catcher模块，用于hook住第一层的输入并缓存下来
     class Catcher(nn.Module):
         def __init__(self, module):
             super().__init__()
             self.module = module
         def forward(self, inp, **kwargs):
+            # 缓存当前batch的embedding输出
             inps[cache['i']] = inp.cpu()
             cache['i'] += 1
+            # 缓存attention_mask和position_ids
             if cache['attention_mask'] is None:
                 cache['attention_mask'] = kwargs['attention_mask'].cpu()
                 if "opt" not in model_name:
@@ -110,7 +115,9 @@ def profle_svdllm_low_resource(model_name, model, calib_loader, dev):
                 cache['attention_mask'] = torch.cat((cache['attention_mask'], kwargs['attention_mask'].cpu()), dim=0)
                 if "opt" not in model_name:
                     cache['position_ids'] = torch.cat((cache['position_ids'], kwargs['position_ids'].cpu()), dim=0)
+            # 用异常中断前向传播，避免继续往后算
             raise ValueError
+    # 4. 用Catcher替换第一层，遍历calib_loader，收集所有样本的embedding输出
     layers[0] = Catcher(layers[0])
     for batch in calib_loader:
         try:
@@ -118,6 +125,7 @@ def profle_svdllm_low_resource(model_name, model, calib_loader, dev):
             model(**batch)
         except ValueError:
             pass
+    # 5. 恢复第一层为原始层，并将其转回CPU，embedding等也转回CPU，释放显存
     layers[0] = layers[0].module
     layers[0] = layers[0].cpu()
     if "opt" in model_name:
@@ -128,15 +136,18 @@ def profle_svdllm_low_resource(model_name, model, calib_loader, dev):
         model.model.embed_tokens = model.model.embed_tokens.cpu()
         model.model.norm = model.model.norm.cpu()
     torch.cuda.empty_cache()
+    # 6. 初始化outs用于存储每层输出，准备开始逐层profile
     outs = torch.zeros_like(inps)
     attention_masks = cache['attention_mask']
     if "opt" not in model_name:
         position_ids = cache['position_ids']
     profiling_mat = {}
+    # 7. 逐层遍历，每次只把当前层转到dev，其他层在CPU，节省显存
     for i in tqdm(range(len(layers))):
         layer_profile = {}
         layer = layers[i].to(dev)
-        subset = find_layers(layer)        
+        subset = find_layers(layer)        # 找到本层所有需要profile的线性子层
+        # 8. 定义hook函数，统计每个线性子层的输入协方差矩阵（scaling_diag_matrix）
         def hook(module, input, output):
             inp = input[0].detach().float()
             if inp.dim() == 2:  # for opt
@@ -147,20 +158,24 @@ def profle_svdllm_low_resource(model_name, model, calib_loader, dev):
             del inp, adds, adds_sum, output
             torch.cuda.empty_cache()
         handles = []
+        # 9. 给每个线性子层注册hook，并初始化scaling_diag_matrix
         for name in subset:
             subset[name].scaling_diag_matrix = 0
             handles.append(subset[name].register_forward_hook(hook))
+        # 10. 用缓存的inps依次前向，收集本层所有子层的输入统计
         for j in range(inps.shape[0]):
             if "opt" not in model_name:
                 outs[j] = layer(inps[j].unsqueeze(0), attention_mask=attention_masks[j].unsqueeze(0).to(dev), position_ids=position_ids[j].unsqueeze(0).to(dev))[0]
             else:
                 outs[j] = layer(inps[j].unsqueeze(0), attention_mask=attention_masks[j].unsqueeze(0).to(dev))[0]
+        # 11. 移除hook，释放资源
         for h in handles:
             h.remove()
         layer = layer.cpu()
         for name in subset:
             subset[name].scaling_diag_matrix = subset[name].scaling_diag_matrix.cpu()
         torch.cuda.empty_cache()
+        # 12. 对每个子层的scaling_diag_matrix做Cholesky分解，得到whitening矩阵
         for name in subset:
             raw_scaling_diag_matrix = subset[name].scaling_diag_matrix.double().to(dev)
             try:
@@ -176,10 +191,12 @@ def profle_svdllm_low_resource(model_name, model, calib_loader, dev):
             scaling_diag_matrix = raw_scaling_diag_matrix = subset[name].raw_scaling_diag_matrix = None
             del scaling_diag_matrix, raw_scaling_diag_matrix, subset[name].raw_scaling_diag_matrix
             torch.cuda.empty_cache()
+        # 13. 当前层profile结果存入profiling_mat，inps更新为本层输出，释放显存
         layers[i] = layer.cpu()
         profiling_mat[i] = layer_profile
         inps = outs
         torch.cuda.empty_cache()
+    # 14. 返回所有层的profiling矩阵
     return profiling_mat
      
  
@@ -571,8 +588,8 @@ if __name__ == '__main__':
                     model,
                     args.lora,
                     torch_dtype=torch.float16,
-                )
-                model = model.merge_and_unload()
+                )#加载 LoRA 权重
+                model = model.merge_and_unload()#合并 LoRA 权重
                 torch.save({'model': model, 'tokenizer': tokenizer}, args.lora + '/merge.pt')
         model.eval()
         model = model.float()
