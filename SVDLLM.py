@@ -598,3 +598,7 @@ if __name__ == '__main__':
             ppl_eval(model, tokenizer, datasets=['wikitext2'], model_seq_len=args.model_seq_len, batch_size=args.eval_batch_size, device=args.DEV)
         elif args.step == 5:
             eff_eval(model, tokenizer, generated_len=args.gen_seq_len, batch_size=args.eval_batch_size, device=args.DEV)
+        elif args.step == 6:
+            param_size = sum(p.numel() * p.element_size() for p in model.parameters())
+            total_memory_bytes = param_size
+            print(f"Total model size: {total_memory_bytes / (1024 ** 2):.2f} MB")
