@@ -242,6 +242,7 @@ def whitening(model_name, model, profiling_mat, ratio, dev):
             truc_sigma = torch.diag(truc_s)
             #### Replace Attn, MLP ####
             sqrtSigma = torch.sqrt(truc_sigma)
+            dtype=torch.float16
             svd_u = torch.matmul(truc_u, sqrtSigma).cpu().to(dtype)
             svd_v = torch.matmul(sqrtSigma, truc_v).cpu().to(dtype)
             if 'opt' in model_name:
