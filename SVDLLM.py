@@ -593,7 +593,7 @@ if __name__ == '__main__':
                 model = model.merge_and_unload()#合并 LoRA 权重
                 torch.save({'model': model, 'tokenizer': tokenizer}, args.lora + '/merge.pt')
         model.eval()
-        model = model.float()
+        # model = model.float()
         model = model.to(args.DEV)
         if args.step == 4:
             ppl_eval(model, tokenizer, datasets=['wikitext2'], model_seq_len=args.model_seq_len, batch_size=args.eval_batch_size, device=args.DEV)
