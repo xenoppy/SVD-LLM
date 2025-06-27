@@ -10,6 +10,9 @@ import torch.nn as nn
 from utils.data_utils import *
 from component.svd_llama import SVD_LlamaAttention, SVD_LlamaMLP
 from component.svd_mistral import SVD_MistralAttention, SVD_MistralMLP
+from component.svd_llama3 import SVD_Llama3Attention, SVD_Llama3MLP
+from component.svd_llama3_original import Llama3MLP,Llama3Attention
+
 from component.svd_opt import SVDOPTDecoderLayer
 from utils.model_utils import *
 from evaluater import * 
@@ -17,6 +20,28 @@ from evaluater import *
 current_path = os.path.dirname(os.path.abspath(__file__))
 parent_path = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 sys.path.append(current_path)
+
+def convert_llama3_kwargs_to_llama1(kwargs_llama3):
+    position_ids = kwargs_llama3["position_ids"]
+    seq_len = position_ids.shape[1]
+    device = position_ids.device
+
+    # 生成 causal mask
+    mask = torch.tril(torch.ones((seq_len, seq_len), dtype=torch.float16, device=device))
+    attention_mask = (1.0 - mask) * -65504.0
+    attention_mask = attention_mask.unsqueeze(0).unsqueeze(0)  # [1,1,seq,seq]
+
+    # 构造新的 kwargs
+    kwargs_llama1 = {
+        "attention_mask": attention_mask,
+        "position_ids": position_ids,
+        "past_key_value": None,  # 可选：转换 cache
+        "use_cache": kwargs_llama3.get("use_cache", True),
+        "output_attentions": kwargs_llama3.get("output_attentions", False),
+        "position_embeddings": kwargs_llama3.get("position_embeddings", None),
+    }
+
+    return kwargs_llama1
 
 
 
@@ -96,7 +121,7 @@ def profle_svdllm_low_resource(model_name, model, calib_loader, dev):
     inps = torch.zeros(
         (len(calib_loader), model.seqlen, model.config.hidden_size), dtype=dtype, device=dev
     )
-    cache = {'i': 0, 'attention_mask': None, "position_ids": None}
+    cache = {'i': 0, 'attention_mask': None, "position_ids": None, "position_embeddings_cos": None, "position_embeddings_sin": None}
     # 3.定义Catcher模块，用于hook住第一层的输入并缓存下来
     class Catcher(nn.Module):
         def __init__(self, module):
@@ -106,11 +131,23 @@ def profle_svdllm_low_resource(model_name, model, calib_loader, dev):
             # 缓存当前batch的embedding输出
             inps[cache['i']] = inp.cpu()
             cache['i'] += 1
+            if "Llama-3" in model_name:
+                kwargs = convert_llama3_kwargs_to_llama1(kwargs)
+                cos, sin = kwargs['position_embeddings']
+                
+                if cache['position_embeddings_cos'] is None:
+                    cache['position_embeddings_cos'] = cos.cpu()
+                else:
+                    cache['position_embeddings_cos'] = torch.cat((cache['position_embeddings_cos'], cos.cpu()), dim=0)
+                if cache['position_embeddings_sin'] is None:
+                    cache['position_embeddings_sin'] = sin.cpu()
+                else:
+                    cache['position_embeddings_sin'] = torch.cat((cache['position_embeddings_sin'], sin.cpu()), dim=0)
             # 缓存attention_mask和position_ids
             if cache['attention_mask'] is None:
                 cache['attention_mask'] = kwargs['attention_mask'].cpu()
                 if "opt" not in model_name:
-                    cache['position_ids'] = kwargs['position_ids'].cpu()
+                    cache['position_ids'] = kwargs['position_ids'].cpu()                        
             else:
                 cache['attention_mask'] = torch.cat((cache['attention_mask'], kwargs['attention_mask'].cpu()), dim=0)
                 if "opt" not in model_name:
@@ -141,6 +178,9 @@ def profle_svdllm_low_resource(model_name, model, calib_loader, dev):
     attention_masks = cache['attention_mask']
     if "opt" not in model_name:
         position_ids = cache['position_ids']
+    if "Llama-3" in model_name:
+        position_embeddings_coss= cache['position_embeddings_cos']
+        position_embeddings_sins = cache['position_embeddings_sin']
     profiling_mat = {}
     # 7. 逐层遍历，每次只把当前层转到dev，其他层在CPU，节省显存
     for i in tqdm(range(len(layers))):
@@ -164,7 +204,9 @@ def profle_svdllm_low_resource(model_name, model, calib_loader, dev):
             handles.append(subset[name].register_forward_hook(hook))
         # 10. 用缓存的inps依次前向，收集本层所有子层的输入统计
         for j in range(inps.shape[0]):
-            if "opt" not in model_name:
+            if "Llama-3" in model_name:
+                outs[j] = layer(inps[j].unsqueeze(0), attention_mask=attention_masks[j].unsqueeze(0).to(dev), position_ids=position_ids[j].unsqueeze(0).to(dev), position_embeddings=(position_embeddings_coss[j].unsqueeze(0).to(dev), position_embeddings_sins[j].unsqueeze(0).to(dev)))[0]                
+            elif "opt"  not in model_name:
                 outs[j] = layer(inps[j].unsqueeze(0), attention_mask=attention_masks[j].unsqueeze(0).to(dev), position_ids=position_ids[j].unsqueeze(0).to(dev))[0]
             else:
                 outs[j] = layer(inps[j].unsqueeze(0), attention_mask=attention_masks[j].unsqueeze(0).to(dev))[0]
@@ -212,7 +254,15 @@ def whitening(model_name, model, profiling_mat, ratio, dev):
         layer = layers[i]
         subset = find_layers(layer)
         #### Replace Attn, MLP ####
-        if "llama" in model_name or "vicuna" in model_name:
+        if "Llama-3" in model_name:
+            if ratio >= 10:
+                svd_attn = Llama3Attention(model.config, layer_idx=i, ratio=ratio)
+                svd_mlp = Llama3MLP(model.config, ratio=ratio)
+            else:
+                svd_attn = SVD_Llama3Attention(model.config, layer_idx=i, ratio=ratio)
+                svd_mlp = SVD_Llama3MLP(model.config, ratio=ratio)
+
+        elif "llama" in model_name or "vicuna" in model_name:
             svd_attn = SVD_LlamaAttention(config=model.config, ratio=ratio)
             svd_mlp = SVD_LlamaMLP(hidden_size=layer.hidden_size, intermediate_size=model.config.intermediate_size, hidden_act=model.config.hidden_act, ratio=ratio)
         elif "mistral" in model_name:
@@ -245,7 +295,24 @@ def whitening(model_name, model, profiling_mat, ratio, dev):
             dtype=torch.float16
             svd_u = torch.matmul(truc_u, sqrtSigma).cpu().to(dtype)
             svd_v = torch.matmul(sqrtSigma, truc_v).cpu().to(dtype)
-            if 'opt' in model_name:
+            if 'Llama-3' in model_name and ratio>=10:
+                if "q_proj" in name:
+                    svd_attn.q_proj.weight.data = W.to(dtype)
+                elif "k_proj" in name:
+                    svd_attn.k_proj.weight.data = W.to(dtype)
+                elif "v_proj" in name:
+                    svd_attn.v_proj.weight.data = W.to(dtype)
+                elif "o_proj" in name:
+                    svd_attn.o_proj.weight.data = W.to(dtype)
+                    layer.self_attn =  svd_attn
+                elif "gate_proj" in name:
+                    svd_mlp.gate_proj.weight.data =  W.to(dtype)
+                elif "down_proj" in name:
+                    svd_mlp.down_proj.weight.data =  W.to(dtype)
+                elif "up_proj" in name:
+                    svd_mlp.up_proj.weight.data =  W.to(dtype)
+                    layer.mlp = svd_mlp    
+            elif 'opt' in model_name:
                 if "q_proj" in name:
                     svd_decoder.self_attn.q_u_proj.weight.data = svd_u
                     svd_decoder.self_attn.q_v_proj.weight.data = svd_v
