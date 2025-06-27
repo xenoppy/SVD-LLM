@@ -307,7 +307,7 @@ if __name__ == '__main__':
     # if args.save:
     #     llama_pack3(model, quantizers)
     #     torch.save(model.state_dict(), args.save)
-    ppl_eval(model, tokenizer, datasets=['wikitext2'], model_seq_len=2048, batch_size=16, device=args.DEV)
+    #ppl_eval(model, tokenizer, datasets=['wikitext2'], model_seq_len=2048, batch_size=16, device=args.DEV)
     torch.save({
                 'model': model,
                 'tokenizer': tokenizer

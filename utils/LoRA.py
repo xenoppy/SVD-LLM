@@ -119,7 +119,7 @@ def apply_lora(model, tokenizer, batch_size=64, micro_batch_size=4, cutoff_len=2
         task_type="CAUSAL_LM",
     )
     model = get_peft_model(model, config)
-    model.print_trainable_parameters()  
+    # model.print_trainable_parameters()
 
     # Load Train Dataset
     data = load_dataset(data_path)
@@ -278,7 +278,7 @@ def main(args):
         task_type="CAUSAL_LM",
     )
     model = get_peft_model(model, config)
-    model.print_trainable_parameters()  
+    # model.print_trainable_parameters()  
 
     # Load Train Dataset
     data = load_dataset(args.data_path)

@@ -21,7 +21,8 @@ def ppl_eval(model, tokenizer, datasets=['wikitext2', 'ptb', 'c4'], model_seq_le
         nlls = []
         for batch in tqdm(test_loader):
             batch = batch.to(device)
-            output = model(batch, use_cache=False)
+            with torch.autocast(device_type='cuda', dtype=torch.float16):
+                output = model(batch, use_cache=False)
             lm_logits = output.logits
             if torch.isfinite(lm_logits).all():
                 shift_logits = lm_logits[:, :-1, :].contiguous()
