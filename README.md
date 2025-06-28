@@ -1,85 +1,39 @@
-<p align="center">
-<img src="figures/logo.png" width="30%"> <br>
-</p>
-
-<div align="center">
-<h1>SVD-LLM: Singular Value Decomposition for Large Language Model Compression</h1>
-  <div align="center">
-  <a href="https://opensource.org/licenses/Apache-2.0">
-    <img alt="License: Apache 2.0" src="https://img.shields.io/badge/License-Apache%202.0-4E94CE.svg">
-  </a>
-  <a href="https://pytorch.org/">
-    <img src="https://img.shields.io/badge/PyTorch-%3E=v2.0.1-EE4C2C.svg?style=flat-square" alt="PyTorch>=v1.7.1">
-  </a>
-    <a href="https://huggingface.co/docs/transformers/v4.35.2/en/index">
-    <img src="https://img.shields.io/badge/transformers-v4.35.2-0B952C.svg?style=flat-square" alt="transformers==v4.35.2">
-  </a>
-  <a href="https://github.com/facebookresearch/llama">
-    <img src="https://img.shields.io/badge/LLMs-LLaMA-FFB000.svg?style=flat-square" alt="LLaMA">
-  </a>
-  <a href="https://github.com/facebookresearch/llama">
-    <img src="https://img.shields.io/badge/LLMs-Llama2-FAB093.svg?style=flat-square" alt="Llama-2">
-  </a>
-  <a href="https://huggingface.co/mistralai/Mistral-7B-v0.1">
-    <img src="https://img.shields.io/badge/LLMs-Mistral-8A2BE2.svg?style=flat-square" alt="mistral">
-  </a>
-  <a href="https://huggingface.co/facebook/opt-6.7b">
-    <img src="https://img.shields.io/badge/LLMs-OPT-ADD8E6.svg?style=flat-square" alt="opt">
-  </a>
-</div>
-</div>
 
 ## ✨Roadmap
-We are working on the following tasks, please stay tuned!
+This is Weichu.
+I am working on the following tasks, please stay tuned!
 
-- [X] Release the code of SVD-LLM.
-- [ ] Release the code of SVD-LLM V2.
-- [ ] Upgrade the transformers package to the latest version.
-- [ ] Update the efficiency evaluation code.
-- [ ] Optimize the compression of GQA-based LLMs.
-
-
-## Introduction
-  
-> **[SVD-LLM: Truncation-aware Singular Value Decomposition for Large Language Model Compression](https://openreview.net/forum?id=LNYIUouhdt&referrer=%5BAuthor%20Console%5D(%2Fgroup%3Fid%3DICLR.cc%2F2025%2FConference%2FAuthors%23your-submissions))**
-> 
-> *Xin Wang<sup>1</sup>, Yu Zheng<sup>2</sup>, Zhongwei Wan<sup>1</sup>, Mi Zhang<sup>1</sup>*   
-> *<sup>1</sup>The Ohio State University, <sup>2</sup>Michigan State University*
-> 
-> International Conference on Learning Representations (ICLR) 2025
-
-
-> **[SVD-LLM V2: Optimizing Singular Value Truncation for Large Language Model Compression](https://arxiv.org/abs/2503.12340)**
-> 
-> *Xin Wang, Samiul Alam, Zhongwei Wan, Hui Shen, Mi Zhang*  
-> *The Ohio State University*
-> 
-> Annual Conference of the Nations of the Americas Chapter of the Association for Computational Linguistics (NAACL) 2025
+- [X] Support SVD_LLM for Llama3.1-1B.
+- [ ] Support LoRA for SVD_LLM compressed Llama3.1-1B.
 
 
 ## Quick Start
-
 ### Installation
-Please keep the version of the transformers package exactly equal to 4.35.2 since the svd-compressed version of LLM has a slight change of model structure (in the `component/.` folder).
-Create and set up a conda environment with python version 3.9 (newer versions break some dependencies)
+There are some difference 
 ```
-conda create -n compress python=3.9
-conda activate compress
+conda create -n compress_llama3 python=3.10 -y
+conda activate compress_llama3
 ```
 Clone and navigate to the repository
 ```
-git clone https://github.com/AIoT-MLSys-Lab/SVD-LLM.git
+git clone https://github.com/xenoppy/SVD-LLM.git
 ```
 Install requirements.txt
 ```
+cd SVD-LLM
 pip install -r requirements.txt
 ```
 
+
 ### Quick Example
+download a SVD_LLM compressed Llama3.2-1B
 ```
-bash compress_llama.sh
+wget https://huggingface.co/wyang338/Llama-3.2-1B-SVDed/resolve/main/meta_llama_Llama_3.2_1B_whitening_only_1.0.pt
 ```
-This script would compress the LLaMA-7B model under 20\% compression ratio and automatically run the evaluation code, including both perplexity and efficiency of the compressed model.
+Then run those commands to do inference things
+```
+python SVDLLM.py --step 7 --model_path meta_llama_Llama_3.2_1B_whitening_only_1.0.pt
+```
 
     
 ## Step-by-Step Instructions of SVD-LLM
