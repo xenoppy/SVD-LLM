@@ -670,3 +670,28 @@ if __name__ == '__main__':
             param_size = sum(p.numel() * p.element_size() for p in model.parameters())
             total_memory_bytes = param_size
             print(f"Total model size: {total_memory_bytes / (1024 ** 2):.2f} MB")
+        elif args.step == 7:
+            # do the inference
+            if args.model_path == "original":
+                model, tokenizer = get_model_from_huggingface(args.model)
+            else:
+                model, tokenizer = get_model_from_local(args.model_path)
+                if args.lora is not None:
+                    from utils.peft import PeftModel
+                    model = PeftModel.from_pretrained(
+                        model,
+                        args.lora,
+                        torch_dtype=torch.float16,
+                    )#加载 LoRA 权重
+                    model = model.merge_and_unload()#合并 LoRA 权重
+            model.eval()
+            model = model.to(args.DEV)
+            # get the prompt from the user
+            prompt = input("Please enter a prompt for text generation: ")
+            if not prompt:
+                prompt = "Once upon a time in a land far, far away, there lived a dragon who loved to read books."
+
+            inputs = tokenizer(prompt, return_tensors="pt").to(args.DEV)
+            outputs = model.generate(**inputs, max_new_tokens=args.gen_seq_len)
+            generated_text = tokenizer.decode(outputs[0], skip_special_tokens=True)
+            print(f"Generated text: {generated_text}")
